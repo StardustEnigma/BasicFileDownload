@@ -3,17 +3,17 @@ package main
 import (
 	"fmt"
 	"time"
+	"sync" 
 )
-
-func (d DownloadJob) Display(){
-	fmt.Println(d.FileName)
-}
 
 type DownloadJob struct {
 	ID int
 	FileName string
 	SizeMB int
 	Status string
+}
+func (d DownloadJob) Display(){
+	fmt.Println(d.FileName)
 }
 func logger(msg string){
 	fmt.Println(msg)
@@ -41,13 +41,26 @@ func PrintAll[T any](items []T){
 	}
 }
 
-func Download(job DownloadJob){
+func Download(job DownloadJob, successChan chan string,failureChan chan string,mu *sync.Mutex,stats map[string]int){
 	fmt.Println("Starting",job.FileName)
+	defer fmt.Println("Finished",job.FileName)
 
 	time.Sleep(2*time.Second)
-
-	fmt.Println("Downloaded",job.FileName)
+	if job.SizeMB > 50 {
+		mu.Lock()
+		stats["failed"]++
+		mu.Unlock()
+		
+		failureChan <- job.FileName
+		return
+	}
+	mu.Lock()
+	stats["completed"]++
+	mu.Unlock()
+	successChan <- job.FileName
+	
 }
+
 
 func main(){
 	jobs := []DownloadJob{}
@@ -69,15 +82,36 @@ func main(){
 		"completed" : 0,
 		"failed":0,
 	}
-	stats["completed"]++
+	mu := sync.Mutex{}
 	fmt.Println(stats)
 
 	logger("Download Started")
 	PrintAll(jobs)
-	
-	for _ ,job := range jobs{
-		go Download(job)
+
+	var p Processor
+
+	for _,job := range jobs{
+		p=job
+		p.Process()
 	}
-	time.Sleep(3*time.Second)
+	successChan := make(chan string,3)
+	failureChan := make(chan string,3)
+	for _ ,job := range jobs{
+		go Download(job,successChan,failureChan,&mu,stats)
+		
+	}
+	for i := 0; i < len(jobs); i++ {
+		select{
+		case file := <- successChan :
+			fmt.Println("Success :",file)
+
+		case file := <- failureChan :
+			fmt.Println("Failed :",file)
+		}
+	
+	}
+	fmt.Println("Final Stats:")
+	fmt.Println(stats)
+	
 	
 }
